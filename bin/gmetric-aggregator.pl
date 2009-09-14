@@ -26,6 +26,7 @@ Usage: $me [OPTIONS]...
   -P, --listen-port=INT     Local UDP port to listen on. Default 18649
   -n, --period=INT          Time period in seconds between aggregations. Default 60
   -s, --suffix=STRING       Suffix to append to gmetric units. Default "/s"
+  -f, --[no]-floating       Always use "double" type instead of original metrics' types. Default on
   -d, --daemon              Run in daemon mode.
   -g, --debug               Display debugging output
   --help                    Print help and exit
@@ -41,6 +42,7 @@ GetOptions(
     'P|listen-port=i'   => \(my $listen_port    = 18649),
     'n|period=i'        => \(my $period         = 60),
     's|suffix=s'        => \(my $units_suffix   = '/s'),
+    'f|floating!'       => \(my $output_doubles = 1),
     'd|daemon!'         => \(my $daemonize),
     'g|debug'           => \(my $debug),
     'help!'             => \(my $help),
@@ -73,6 +75,8 @@ my $gmond = Ganglia::Gmetric::PP->new(listen_host => $listen_host, listen_port =
 # can only aggregate numeric types
 my %allowed_types = map {$_ => 1} qw/ double float int8 int16 int32 uint8 uint16 uint32 /;
 
+my $last_time;
+
 # store gmetric events as they are received
 my %metric_aggregates;
 my %metric_templates;
@@ -82,6 +86,9 @@ sub handle {
     eval { @sample = $gmond->receive };
     return unless @sample;
     return unless $allowed_types{ $sample[METRIC_INDEX_TYPE] };
+
+    # start counting at receipt of first event
+    $last_time ||= time;
 
     # aggregate sums on the fly
     $metric_aggregates{ $sample[METRIC_INDEX_NAME] } += $sample[METRIC_INDEX_VALUE];
@@ -100,31 +107,39 @@ else {
 }
 
 # periodically aggregate collected samples and re-emit to target gmond
-my $last_time = time;
 my $timer;
 sub aggregator {
-    my $time = time;
-    my $measured_period = $time - $last_time;
-    $debug && warn "Aggregating at $time ($measured_period elapsed)\n";
+    if ($last_time) {
+        my $time = time;
+        my $measured_period = $time - $last_time;
+        $debug && warn "Aggregating at $time ($measured_period elapsed)\n";
 
-    # emit for any metric seen before, even if it wasn't seen in the last period
-    for my $metric (keys %metric_templates) {
-        my @aggregate = @{ $metric_templates{$metric} };
+        # emit for any metric seen before, even if it wasn't seen in the last period
+        for my $metric (keys %metric_templates) {
+            my @aggregate = @{ $metric_templates{$metric} };
 
-        # aggregated value is rate of metric over last period
-        $aggregate[METRIC_INDEX_VALUE] = ($metric_aggregates{$metric}||0) / ($measured_period||1);
-        $aggregate[METRIC_INDEX_VALUE] = int($aggregate[METRIC_INDEX_VALUE])
-            if $aggregate[METRIC_INDEX_TYPE] =~ /int/;
+            # aggregated value is rate of metric over last period
+            $aggregate[METRIC_INDEX_VALUE] = ($metric_aggregates{$metric}||0) / ($measured_period||1);
 
-        $aggregate[METRIC_INDEX_UNITS] .= $units_suffix;
-        $aggregate[METRIC_INDEX_TMAX] = $period;
+            if ($output_doubles) {
+                $aggregate[METRIC_INDEX_TYPE] = GANGLIA_VALUE_DOUBLE;
+            }
+            elsif ($aggregate[METRIC_INDEX_TYPE] =~ /int/) {
+                $aggregate[METRIC_INDEX_VALUE] = int($aggregate[METRIC_INDEX_VALUE])
+            }
 
-        $emitter->send(@aggregate);
-        $debug && warn Data::Dumper->Dump([\@aggregate], ["${metric}_aggregated"]);
+            $aggregate[METRIC_INDEX_UNITS] .= $units_suffix;
+            $aggregate[METRIC_INDEX_TMAX] = $period;
+
+            $emitter->send(@aggregate);
+
+            $debug && warn Data::Dumper->Dump([\@aggregate], ["${metric}_aggregated"]);
+        }
+        %metric_aggregates = ();
+
+        $last_time = $time;
     }
-    %metric_aggregates = ();
 
-    $last_time = $time;
     if ($use_anyevent) {
         $timer = AnyEvent->timer(after => $period, cb => \&aggregator);
     }

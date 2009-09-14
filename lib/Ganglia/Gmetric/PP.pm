@@ -19,7 +19,7 @@ with no non-core dependencies, it tries to be fast.
 
 package Ganglia::Gmetric::PP;
 
-our $VERSION = '0.96';
+our $VERSION = '0.97';
 
 use strict;
 use warnings;
@@ -221,7 +221,7 @@ sub send {
     $msg[5] = DEFAULT_SLOPE unless defined $msg[5];
     $msg[6] = DEFAULT_TMAX  unless defined $msg[6];
     $msg[7] = DEFAULT_DMAX  unless defined $msg[7];
-    $self->print(pack GMETRIC_FORMAT, @msg);
+    $self->SUPER::send(pack GMETRIC_FORMAT, @msg);
 }
 
 =item * @metric = $gmetric->receive()
