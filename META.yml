@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Ganglia-Gmetric-PP
-version:            1.00
+version:            1.01
 abstract:           Pure Perl emitter/parser of Ganglia gmetric monitoring
 author:
     - Adam Thomason <athomason@cpan.org>
